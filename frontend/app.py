@@ -5,19 +5,87 @@ import numpy as np
 from datetime import datetime
 import json
 import base64
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
 # base API URL
 API_URL = "http://localhost:8000"
 
-def main():
-    st.set_page_config(
-        page_title="YOLO Object Detection Demo",
-        page_icon="🔍",
-        layout="wide"
-    )
-    st.title("YOLO Object Detection Demo")
-    st.write("Upload an image to perform object detection")
+#################################### login page ###############################
+def login_page():
+    
+    """Display login page and handle authentication"""
+    st.title("Welcome to YOLO Detection App")
+    st.write("Please sign in to continue")
+    
+    # Login form
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Sign In")
+        
+        if submitted:
+            if username == os.environ['ADMIN'] and password == os.environ['PASSWORD']:  # Demo authentication
+                st.session_state.logged_in = True
+                st.session_state.username = username
+                st.success("Login successful!")
+                st.rerun()
+            else:
+                st.error("Invalid username or password")
+    
+    # Registration link transition
+    st.write("---")
+    st.write("Don't have an account?")
+    if st.button("Register here"):
+        st.session_state.page = "register"
+        st.rerun()
 
+############################### registration page #############################
+def register_page():
+    """Display registration page"""
+    st.title("Create New Account")
+    
+    with st.form("register_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        confirm_password = st.text_input("Confirm Password", type="password")
+        submitted = st.form_submit_button("Register")
+        
+        if submitted:
+            if not username or not password:
+                st.error("Please fill in all fields")
+            elif password != confirm_password:
+                st.error("Passwords do not match")
+            else:
+                # TODO: Implement actual registration logic
+                st.success("Registration successful! Please sign in.")
+                st.session_state.page = "login"
+                st.rerun()
+    
+    st.write("---")
+    if st.button("Back to Login"):
+        st.session_state.page = "login"
+        st.rerun()
+
+
+################################## main page ###############################
+
+def main_app():
+    """Main application after successful login"""
+    st.set_page_config(page_title="YOLO Object Detection", page_icon="🔍", layout="wide")
+    
+    # Header with logout button
+    col1, col2 = st.columns([6, 1])
+    with col1:
+        st.title("YOLO Object Detection")
+    with col2:
+        if st.button("Sign Out"):
+            st.session_state.logged_in = False
+            st.session_state.username = None
+            st.rerun()
+    
+    st.write(f"Welcome, {st.session_state.username}!")
     confidence = st.sidebar.slider(
         "Detection Confidence Threshold",
         min_value=0.0,
@@ -107,6 +175,22 @@ def main():
             st.error(f"An error occurred: {str(e)}")
     else:
         st.info("👆 Please upload an image file")
+
+def main():
+    # Initialize session state
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
+    if "page" not in st.session_state:
+        st.session_state.page = "login"
+    
+    # Route to appropriate page
+    if not st.session_state.logged_in:
+        if st.session_state.page == "login":
+            login_page()
+        elif st.session_state.page == "register":
+            register_page()
+    else:
+        main_app()
 
 if __name__ == "__main__":
     main()
