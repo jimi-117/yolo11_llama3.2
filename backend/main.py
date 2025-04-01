@@ -1,6 +1,6 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from models import FeedbackData
+from models.detection import FeedbackData
 import cv2
 import numpy as np
 from ultralytics import YOLO
@@ -96,3 +96,116 @@ async def save_feedback(feedback: FeedbackData):
         json.dump(feedback_dict, f, indent=4, ensure_ascii=False, cls=DateTimeEncoder)
     
     return {"status": "success"}
+
+
+###### model training #######
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+from clearml import Task
+import asyncio
+from typing import Dict
+from models.training import TrainingConfig
+from pathlib import Path
+import shutil
+
+# ClearML設定を初期化
+Task.set_credentials(
+    api_host=os.getenv("CLEARML_API_HOST"),
+    web_host=os.getenv("CLEARML_WEB_HOST"),
+    files_host=os.getenv("CLEARML_FILES_HOST"),
+    key=os.getenv("CLEARML_API_ACCESS_KEY"),
+    secret=os.getenv("CLEARML_API_SECRET_KEY")
+)
+
+
+# トレーニング状態を保持するグローバル変数
+training_tasks: Dict[str, dict] = {}
+
+@app.post("/train/")
+async def start_training(config: TrainingConfig):
+    try:
+        # ClearMLタスクの初期化
+        task = Task.init(
+            project_name=config.clearml_project,
+            task_name=config.clearml_task_name,
+            tags=config.tags
+        )
+
+        # プロジェクトディレクトリの作成
+        project_dir = Path("projects") / config.project_name
+        project_dir.mkdir(parents=True, exist_ok=True)
+
+        # データセットの検証
+        dataset_path = Path(config.dataset_path)
+        if not dataset_path.exists():
+            return {"error": "Dataset path does not exist"}
+
+        # トレーニングハイパーパラメータの設定とログ
+        train_args = {
+            "data": str(dataset_path / "data.yaml"),
+            "epochs": config.epochs,
+            "batch": config.batch_size,
+            "imgsz": config.imgsz,
+            "workers": config.workers,
+            "device": config.device or "auto",
+            "pretrained": config.pretrained,
+            "project": str(project_dir),
+            "name": "train",
+        }
+        
+        # ClearMLにパラメータを記録
+        task.connect(train_args)
+
+        async def train_model():
+            try:
+                # 新しいYOLOインスタンスを作成
+                train_model = YOLO("yolo11x.pt")
+                
+                # トレーニング実行
+                results = train_model.train(**train_args)
+                
+                # メトリクスをClearMLに記録
+                task.upload_artifact("best_model", str(project_dir / "train" / "weights" / "best.pt"))
+                task.upload_artifact("last_model", str(project_dir / "train" / "weights" / "last.pt"))
+                
+                # トレーニング完了の記録
+                training_tasks[config.project_name]["status"] = "completed"
+                training_tasks[config.project_name]["completed_at"] = datetime.now().isoformat()
+                training_tasks[config.project_name]["results"] = results
+                
+                task.close()
+                
+            except Exception as e:
+                training_tasks[config.project_name]["status"] = "failed"
+                training_tasks[config.project_name]["error"] = str(e)
+                task.mark_failed(str(e))
+
+        # トレーニングタスクの登録
+        training_tasks[config.project_name] = {
+            "status": "running",
+            "started_at": datetime.now().isoformat(),
+            "config": config.model_dump(),
+            "clearml_task_id": task.id
+        }
+
+        # バックグラウンドでトレーニングを実行
+        asyncio.create_task(train_model())
+
+        return {
+            "status": "training_started",
+            "project_name": config.project_name,
+            "clearml_task_id": task.id
+        }
+
+    except Exception as e:
+        return {"error": f"Training setup failed: {str(e)}"}
+
+@app.get("/train/{project_name}/status")
+async def get_training_status(project_name: str):
+    if project_name not in training_tasks:
+        return {"error": "Training project not found"}
+    
+    return training_tasks[project_name]
