@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 from datetime import datetime
 import json
+import base64
 
 # base API URL
 API_URL = "http://localhost:8000"
@@ -14,11 +15,9 @@ def main():
         page_icon="🔍",
         layout="wide"
     )
-
     st.title("YOLO Object Detection Demo")
     st.write("Upload an image to perform object detection")
 
-    # detection settings
     confidence = st.sidebar.slider(
         "Detection Confidence Threshold",
         min_value=0.0,
@@ -33,28 +32,43 @@ def main():
 
     if uploaded_file is not None:
         try:
-            # send request to Yolo API
-            files = {"file": uploaded_file}
+            # ファイルは1度だけ読み込む
+            file_bytes = uploaded_file.read()
+            
+            # APIリクエストに送信
+            files = {"file": ("image.jpg", file_bytes, "image/jpeg")}
             params = {"confidence": confidence}
             response = requests.post(f"{API_URL}/detect/", files=files, params=params)
             result = response.json()
 
-            # display input and output images horizontally
+            # 入力画像と出力画像を横並びに表示（file_bytes を再利用）
             col1, col2 = st.columns(2)
             
             with col1:
-                img_bytes = uploaded_file.read()
-                nparr = np.frombuffer(img_bytes, np.uint8)
+                nparr = np.frombuffer(file_bytes, np.uint8)
                 img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                 img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 st.image(img_rgb, caption="Input Image", width=400)
 
             with col2:
-                annotated_img = np.array(result["annotated_image"])
-                st.image(annotated_img, caption="Detection Results", width=400)
+                annotated_b64 = result.get("annotated_image", "")
+                if annotated_b64:
+                    decoded_bytes = base64.b64decode(annotated_b64)
+                    if not decoded_bytes:
+                        st.error("Decoded image data is empty")
+                    else:
+                        nparr = np.frombuffer(decoded_bytes, np.uint8)
+                        annotated_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                        if annotated_img is None:
+                            st.error("Failed to decode annotated image")
+                        else:
+                            annotated_img_rgb = cv2.cvtColor(annotated_img, cv2.COLOR_BGR2RGB)
+                            st.image(annotated_img_rgb, caption="Detection Results", width=400)
+                else:
+                    st.error("No annotated image in response")
 
-            # show detection results
-            if result["detections"]:
+            # 検出結果の表示とフィードバック処理
+            if result.get("detections"):
                 st.success(f"Detection completed! Processing time: {result['inference_time']:.2f} seconds")
                 st.write(f"Objects detected: {len(result['detections'])}")
 
@@ -67,11 +81,8 @@ def main():
 
                 for i, detection in enumerate(result["detections"]):
                     info_col1, info_col2 = st.columns([3, 1])
-                    
                     with info_col1:
-                        st.write(f"Detection #{i+1}: {detection['class_name']} "
-                               f"(confidence: {detection['confidence']:.2%})")
-                    
+                        st.write(f"Detection #{i+1}: {detection['class_name']} (confidence: {detection['confidence']:.2%})")
                     with info_col2:
                         feedback = st.radio(
                             "Is this detection accurate?",
@@ -79,10 +90,8 @@ def main():
                             key=f"feedback_{i}",
                             horizontal=True
                         )
-
                         detection["feedback"] = feedback
                         feedback_data["detections"].append(detection)
-
                     st.markdown("---")
 
                 if st.button("Save Feedback"):
