@@ -1,15 +1,16 @@
 [project]
-name = "yolo11_streamlit"
+name = "yolo11_llama3.2"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "clearml>=1.18.0",
     "fastapi>=0.115.12",
     "kaggle>=1.7.4.2",
     "opencv-python>=4.11.0.86",
     "pillow>=11.1.0",
+    "prometheus-client>=0.21.1",
     "python-multipart>=0.0.20",
     "sqlalchemy>=2.0.40",
     "streamlit>=1.44.0",
@@ -25,3 +26,7 @@ dev = [
     "python-dotenv>=1.1.0",
     "python-jose[cryptography]>=3.4.0",
 ]
+
+# [build-system]
+# requires = ["hatchling"]
+# build-backend = "hatchling.build"

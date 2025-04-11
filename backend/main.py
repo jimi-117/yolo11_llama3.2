@@ -24,59 +24,84 @@ app.add_middleware(
 # global model instance
 model = YOLO("yolo11x.pt")
 
+###### monitoring with prometheus #########
+from monitoring.metrics import metrics
+from prometheus_fastapi_instrumentator import Instrumentator
+
+# Adding Prometheus metrics endpoint
+Instrumentator().instrument(app).expose(app)
+
+###########################
+
+
+
+
 @app.post("/detect/")
 async def detect_objects(file: UploadFile = File(...), confidence: float = 0.5):
+    metrics.detection_requests.inc()
     try:
-        # read image file
-        contents = await file.read()
-        if not contents:
-            return {"error": "Empty file received"}
+        with metrics.inference_time.time():
+    
+            try:
+                # read image file
+                contents = await file.read()
+                if not contents:
+                    return {"error": "Empty file received"}
 
-        # transform byte data to image
-        nparr = np.frombuffer(contents, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        if img is None:
-            return {"error": "Failed to decode image"}
+                # transform byte data to image
+                nparr = np.frombuffer(contents, np.uint8)
+                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if img is None:
+                    return {"error": "Failed to decode image"}
 
-        # predict objects
-        start_time = time.time()
-        results = model(img, conf=confidence, verbose=False)
-        inference_time = time.time() - start_time
+                # predict objects
+                start_time = time.time()
+                results = model(img, conf=confidence, verbose=False)
+                inference_time = time.time() - start_time
 
-        # process results
-        detections = []
-        if len(results) > 0:
-            result = results[0]
-            boxes = result.boxes
-            for i, box in enumerate(boxes):
-                detection = {
-                    "id": i,
-                    "class_name": result.names[box.cls[0].item()],
-                    "confidence": float(box.conf[0].item()),
-                    "bbox": box.xyxy[0].tolist()
+                # process results
+                detections = []
+                if len(results) > 0:
+                    result = results[0]
+                    boxes = result.boxes
+                    for i, box in enumerate(boxes):
+                        detection = {
+                            "id": i,
+                            "class_name": result.names[box.cls[0].item()],
+                            "confidence": float(box.conf[0].item()),
+                            "bbox": box.xyxy[0].tolist()
+                        }
+                        detections.append(detection)
+
+                    # generate annotated image from detection result
+                    annotated_img = result.plot()
+                else:
+                    # Return original image if no detections
+                    annotated_img = img  # TODO: add annotation treatment if needed
+
+                success, buffer = cv2.imencode('.jpg', annotated_img)
+                if not success:
+                    return {"error": "Failed to encode result image"}
+                img_str = base64.b64encode(buffer).decode()
+
+                return {
+                    "inference_time": inference_time,
+                    "detections": detections,
+                    "annotated_image": img_str
                 }
-                detections.append(detection)
+            except Exception as e:
+                return {"error": f"Processing failed: {str(e)}"}
 
-            # generate annotated image from detection result
-            annotated_img = result.plot()
-        else:
-            # 検出結果がない場合は、入力画像そのままを返す等の対応
-            annotated_img = img  # または、必要なら別途アノテーション処理を追加
-
-        success, buffer = cv2.imencode('.jpg', annotated_img)
-        if not success:
-            return {"error": "Failed to encode result image"}
-        img_str = base64.b64encode(buffer).decode()
-
-        return {
-            "inference_time": inference_time,
-            "detections": detections,
-            "annotated_image": img_str
-        }
     except Exception as e:
-        return {"error": f"Processing failed: {str(e)}"}
-
+        metrics.detection_errors.inc()
+        raise e
+    
+ 
+ 
+ 
+################# Feedback #####################    
 class DateTimeEncoder(json.JSONEncoder):
+    # This encode the datetime into json format for feedback
     def default(self, obj):
         if isinstance(obj, datetime):
             return obj.isoformat()
@@ -111,7 +136,7 @@ from models.training import TrainingConfig
 from pathlib import Path
 import shutil
 
-# ClearML設定を初期化
+# initialize ClearML task
 Task.set_credentials(
     api_host=os.getenv("CLEARML_API_HOST"),
     web_host=os.getenv("CLEARML_WEB_HOST"),
@@ -121,29 +146,31 @@ Task.set_credentials(
 )
 
 
-# トレーニング状態を保持するグローバル変数
+# grobal variable to store training tasks
 training_tasks: Dict[str, dict] = {}
 
 @app.post("/train/")
 async def start_training(config: TrainingConfig):
+    metrics.training_tasks.labels(status="started").inc()
+    metrics.active_trainings.inc()
     try:
-        # ClearMLタスクの初期化
+        # initialize ClearML task
         task = Task.init(
             project_name=config.clearml_project,
             task_name=config.clearml_task_name,
             tags=config.tags
         )
 
-        # プロジェクトディレクトリの作成
+        # make sure the project directory exists
         project_dir = Path("projects") / config.project_name
         project_dir.mkdir(parents=True, exist_ok=True)
 
-        # データセットの検証
+        # validate dataset path
         dataset_path = Path(config.dataset_path)
         if not dataset_path.exists():
             return {"error": "Dataset path does not exist"}
 
-        # トレーニングハイパーパラメータの設定とログ
+        # hyperparameters settings and logging
         train_args = {
             "data": str(dataset_path / "data.yaml"),
             "epochs": config.epochs,
@@ -156,22 +183,22 @@ async def start_training(config: TrainingConfig):
             "name": "train",
         }
         
-        # ClearMLにパラメータを記録
+        # register the training params with ClearML
         task.connect(train_args)
 
         async def train_model():
             try:
-                # 新しいYOLOインスタンスを作成
+                # make new Yolo instance
                 train_model = YOLO("yolo11x.pt")
                 
-                # トレーニング実行
+                # training
                 results = train_model.train(**train_args)
                 
-                # メトリクスをClearMLに記録
+                # Registrer the metrics with ClearML
                 task.upload_artifact("best_model", str(project_dir / "train" / "weights" / "best.pt"))
                 task.upload_artifact("last_model", str(project_dir / "train" / "weights" / "last.pt"))
                 
-                # トレーニング完了の記録
+                # register the training results with ClearML
                 training_tasks[config.project_name]["status"] = "completed"
                 training_tasks[config.project_name]["completed_at"] = datetime.now().isoformat()
                 training_tasks[config.project_name]["results"] = results
@@ -183,7 +210,7 @@ async def start_training(config: TrainingConfig):
                 training_tasks[config.project_name]["error"] = str(e)
                 task.mark_failed(str(e))
 
-        # トレーニングタスクの登録
+        # register the training task with ClearML
         training_tasks[config.project_name] = {
             "status": "running",
             "started_at": datetime.now().isoformat(),
@@ -191,7 +218,7 @@ async def start_training(config: TrainingConfig):
             "clearml_task_id": task.id
         }
 
-        # バックグラウンドでトレーニングを実行
+        # Background task for training
         asyncio.create_task(train_model())
 
         return {

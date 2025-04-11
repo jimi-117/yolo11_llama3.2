@@ -100,14 +100,36 @@ def main_app():
 
     if uploaded_file is not None:
         try:
-            # ファイルは1度だけ読み込む
+            # read only once
             file_bytes = uploaded_file.read()
             
-            # APIリクエストに送信
+            # send file to API
             files = {"file": ("image.jpg", file_bytes, "image/jpeg")}
             params = {"confidence": confidence}
-            response = requests.post(f"{API_URL}/detect/", files=files, params=params)
-            result = response.json()
+            try:
+                response = requests.post(f"{API_URL}/detect/", files=files, params=params)
+                response.raise_for_status()  # Raise an error for bad responses
+                result = response.json()
+            except requests.exceptions.ConnectionError:
+                st.error("Connection error. Please check if the backend server is running.")
+                return
+            except requests.exceptions.Timeout:
+                st.error("Request timed out. Please try again.")
+                return
+            except requests.exceptions.HTTPError as e:
+                if response.status_code == 400:
+                    st.error("Bad request. Please check the input format.")
+                elif response.status_code == 500:
+                    st.error("Internal server error. Please try again later.")
+                else:
+                    st.error(f"HTTP error occurred: {e}")
+                return
+            except requests.exceptions.RequestException as e:
+                st.error(f"An error occurred: {e}")
+                return
+            except json.JSONDecodeError:
+                st.error("Failed to decode JSON response from the server.")
+                return
 
             # 入力画像と出力画像を横並びに表示（file_bytes を再利用）
             col1, col2 = st.columns(2)

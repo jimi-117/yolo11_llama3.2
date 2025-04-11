@@ -1,0 +1,21 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# install system dependencies
+RUN apt-get update && apt-get install -y \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# install uv
+RUN pip install uv
+
+# copy backend application
+COPY pyproject.toml .
+COPY backend/ backend/
+
+# install dependencies directly from pyproject.toml
+RUN uv pip sync --system pyproject.toml
+
+ENV PYTHONUNBUFFERED=1

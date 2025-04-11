@@ -1,0 +1,61 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - CLEARML_API_HOST=${CLEARML_API_HOST}
+      - CLEARML_WEB_HOST=${CLEARML_WEB_HOST}
+      - CLEARML_FILES_HOST=${CLEARML_FILES_HOST}
+      - CLEARML_API_ACCESS_KEY=${CLEARML_API_ACCESS_KEY}
+      - CLEARML_API_SECRET_KEY=${CLEARML_API_SECRET_KEY}
+    command: ["uv", "run", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.frontend
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://api:8000
+      - ADMIN=${ADMIN}
+      - PASSWORD=${PASSWORD}
+    volumes:
+      - ./frontend:/app/frontend
+    command: ["uv", "run", "streamlit", "run", "frontend/app.py", "--server.address", "0.0.0.0"]
+    depends_on:
+      - api
+
+
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+
+  grafana:
+    image: grafana/grafana:10.0.0
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./monitoring/grafana:/etc/grafana
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+
+volumes:
+  prometheus_data:
+  grafana_data:
