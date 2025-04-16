@@ -5,11 +5,14 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "clearml>=1.18.0",
     "fastapi>=0.115.12",
     "kaggle>=1.7.4.2",
+    "loguru>=0.7.3",
     "opencv-python>=4.11.0.86",
     "pillow>=11.1.0",
     "python-multipart>=0.0.20",
+    "sqlalchemy>=2.0.40",
     "streamlit>=1.44.0",
     "torch>=2.6.0",
     "torchvision>=0.21.0",
@@ -19,5 +22,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "passlib[bcrypt]>=1.7.4",
     "python-dotenv>=1.1.0",
+    "python-jose[cryptography]>=3.4.0",
 ]
